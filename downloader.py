@@ -89,6 +89,7 @@ if __name__ == "__main__":
     ###########
     if options.dir: # delete entire directory
         shutil.rmtree(path)
+        os.rmdir(path)
     else: # delete _files.txt and all .parts
         for item in os.listdir(path):
             if item.endswith(".part") or (item.startswith("_") and item.endswith(".txt")):
