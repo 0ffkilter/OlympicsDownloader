@@ -1,24 +1,42 @@
 #!/usr/bin/env python
-
-import sys, os, requests, re, argparse, subprocess, shutil
+import os, sys, requests, re, argparse, subprocess, shutil
+from multiprocessing import Pool
 from tqdm import tqdm
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" + \
+             "(KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"
 FRAGMENT_PATTERN = "video=(\d+),format="
-FRAGMENT_REGEX= re.compile(FRAGMENT_PATTERN)
-FRAGMENT_ARGS = "QualityLevels(3449984)/Fragments(video=%s,format=m3u8-aapl-v3,audiotrack=english)"
-MANIFEST_ARGS = "QualityLevels(3449984)/Manifest(video,format=m3u8-aapl-v3,audiotrack=english,filter=hls)"
+FRAGMENT_REGEX = re.compile(FRAGMENT_PATTERN)
+FRAGMENT_ARGS = "QualityLevels(3449984)/Fragments(video=%s," + \
+                "format=m3u8-aapl-v3,audiotrack=english)"
+MANIFEST_ARGS = "QualityLevels(3449984)/Manifest(video," + \
+                "format=m3u8-aapl-v3,audiotrack=english,filter=hls)"
+path = ""
+
+
+def fetch_file(number):
+    global path
+    out_path = os.path.join(path, "%s.part" % (number))
+    response = requests.get(link + (FRAGMENT_ARGS % (number)),
+                            headers={"User-Agent": USER_AGENT},
+                            stream=True)
+    with open(out_path, "wb") as f:
+        for chunk in response:
+            f.write(chunk)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", dest="dir", required=False, action="store", metavar="path/",
-                        help="path to download directory")
-    parser.add_argument("-i", dest="ism", required=True, action="store", metavar="https://...",
+    parser.add_argument("-d", dest="dir", required=False, action="store",
+                        metavar="path/", help="path to download directory")
+    parser.add_argument("-i", dest="ism", required=True, action="store",
+                        metavar="https://...",
                         help="URL of server manifest (.ism)")
-    parser.add_argument("-o", dest="output", required=False, action="store", metavar="out.mp4",
-                        help="output filename")
-    parser.add_argument("-m", dest="manifest", required=False, action="store", metavar="file",
-                        help=argparse.SUPPRESS)
+    parser.add_argument("-o", dest="output", required=False, action="store",
+                        metavar="out.mp4", help="output filename")
+    parser.add_argument("-m", dest="manifest", required=False,
+                        action="store", metavar="file", help=argparse.SUPPRESS)
     options = parser.parse_args()
 
     #############
@@ -26,7 +44,7 @@ if __name__ == "__main__":
     #############
     if options.dir:
         path = options.dir
-    else: # use download/
+    else:  # use download/
         path = "download/"
     if not os.path.exists(path):
         os.makedirs(path)
@@ -35,7 +53,7 @@ if __name__ == "__main__":
     # Manifest #
     ############
     link = options.ism
-    if link[-1] != "/": # add a slash after the .ism
+    if link[-1] != "/":  # add a slash after the .ism
         link = link + "/"
     if link[-5:] != ".ism/":
         print("Manifest URL must end in .ism. Exiting.")
@@ -65,14 +83,11 @@ if __name__ == "__main__":
     #######################
     # Download fragments #
     ######################
-    for n in tqdm(numbers):
-        out_path = os.path.join(path, "%s.part" %(n))
-        response = requests.get(link + (FRAGMENT_ARGS % (n)),
-                            headers={"User-Agent": USER_AGENT},
-                            stream=True)
-        with open(out_path, "wb") as f:
-            for chunk in response:
-                f.write(chunk)
+    with Pool(4) as p:
+        with tqdm(total=len(numbers)) as pbar:
+            for i, _ in tqdm(enumerate(
+                             p.imap_unordered(fetch_file, numbers))):
+                pbar.update()
 
     ##########
     # Concat #
@@ -82,15 +97,17 @@ if __name__ == "__main__":
         filename = options.output
     else:
         filename = "out.mp4"
-    subprocess.call(["ffmpeg", "-f", "concat", "-safe", "0", "-i", filelist, "-c:v", "copy", "-c:a", "copy", filename])
+    subprocess.call(["ffmpeg", "-f", "concat", "-safe", "0", "-i",
+                     filelist, "-c:v", "copy", "-c:a", "copy", filename])
 
     ###########
     # Cleanup #
     ###########
-    if options.dir: # delete entire directory
-        shutil.rmtree(path)
-        os.rmdir(path)
-    else: # delete _files.txt and all .parts
-        for item in os.listdir(path):
-            if item.endswith(".part") or (item.startswith("_") and item.endswith(".txt")):
-                os.remove(os.path.join(path, item))
+    # if options.dir: # delete entire directory
+    #     shutil.rmtree(path)
+    #     os.rmdir(path)
+    # else: # delete _files.txt and all .parts
+    #     for item in os.listdir(path):
+    #         if item.endswith(".part") or (item.startswith("_")
+    #             and item.endswith(".txt")):
+    #             os.remove(os.path.join(path, item))
