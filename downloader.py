@@ -12,16 +12,15 @@ FRAGMENT_ARGS = "QualityLevels(3449984)/Fragments(video=%s," + \
                 "format=m3u8-aapl-v3,audiotrack=english)"
 MANIFEST_ARGS = "QualityLevels(3449984)/Manifest(video," + \
                 "format=m3u8-aapl-v3,audiotrack=english,filter=hls)"
-path = ""
 
 
-def fetch_file(number):
-    global path
-    out_path = os.path.join(path, "%s.part" % (number))
-    response = requests.get(link + (FRAGMENT_ARGS % (number)),
+def fetch_file(url):
+    if os.path.exists(url[0]):
+        return
+    response = requests.get(url[1],
                             headers={"User-Agent": USER_AGENT},
                             stream=True)
-    with open(out_path, "wb") as f:
+    with open(url[0], "wb") as f:
         for chunk in response:
             f.write(chunk)
 
@@ -37,6 +36,13 @@ if __name__ == "__main__":
                         metavar="out.mp4", help="output filename")
     parser.add_argument("-m", dest="manifest", required=False,
                         action="store", metavar="file", help=argparse.SUPPRESS)
+    parser.add_argument("-t", dest="threads", required=False, action="store",
+                        default=4, type=int, help="number of threads to use")
+    parser.add_argument("--a", dest="aac_encoding", action="store_true",
+                        required=False, help="use aac_adtstoasc encoding")
+    parser.add_argument("--s", dest="save_parts", action="store_true",
+                        required=False, help="save parts after stitching")
+
     options = parser.parse_args()
 
     #############
@@ -83,11 +89,20 @@ if __name__ == "__main__":
     #######################
     # Download fragments #
     ######################
-    with Pool(4) as p:
-        with tqdm(total=len(numbers)) as pbar:
-            for i, _ in tqdm(enumerate(
-                             p.imap_unordered(fetch_file, numbers))):
-                pbar.update()
+    urls = []
+    for n in numbers:
+        out_path = os.path.join(path, "%s.part" % (n))
+        urls.append((out_path, link + (FRAGMENT_ARGS % (n))))
+
+    if options.threads > 1:
+        with Pool(options.threads) as p:
+            with tqdm(total=len(numbers)) as pbar:
+                for i, _ in tqdm(enumerate(
+                                 p.imap_unordered(fetch_file, urls))):
+                    pbar.update()
+    elif options.threads == 1:
+        for i, k in tqdm(urls):
+            fetch_file((i, k))
 
     ##########
     # Concat #
@@ -98,16 +113,21 @@ if __name__ == "__main__":
     else:
         filename = "out.mp4"
     subprocess.call(["ffmpeg", "-f", "concat", "-safe", "0", "-i",
-                     filelist, "-c:v", "copy", "-c:a", "copy", filename])
+                     filelist, "-c:v", "copy", "-c:a", "copy"] +
+                    (["-bsf:a", "aac_adtstoasc"]
+                     if options.aac_encoding else []) +
+                    [filename])
 
     ###########
     # Cleanup #
     ###########
-    # if options.dir: # delete entire directory
-    #     shutil.rmtree(path)
-    #     os.rmdir(path)
-    # else: # delete _files.txt and all .parts
-    #     for item in os.listdir(path):
-    #         if item.endswith(".part") or (item.startswith("_")
-    #             and item.endswith(".txt")):
-    #             os.remove(os.path.join(path, item))
+    if not options.save_parts:
+        if options.dir:  # delete entire directory
+            shutil.rmtree(path)
+            os.rmdir(path)
+        else:  # delete _files.txt and all .parts
+            for item in os.listdir(path):
+                if (item.endswith(".part") or
+                    (item.startswith("_") and
+                     item.endswith(".txt"))):
+                    os.remove(os.path.join(path, item))
